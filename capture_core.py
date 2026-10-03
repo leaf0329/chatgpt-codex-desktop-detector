@@ -17,12 +17,16 @@ class Capture:
         self.store = store if store is not None else Store()
         self.pending = defaultdict(list)
         self.responses = {}
+        self.ignored_responses = set()
         self.records = {}
 
     def request(self, connection, data, transport):
-        if not isinstance(data, dict) or data.get('generate') is False:
+        if not isinstance(data, dict):
             return
         if transport == 'websocket' and data.get('type') != 'response.create':
+            return
+        if data.get('generate') is False:
+            self.pending[connection].append(None)
             return
         meta = data.get('client_metadata')
         meta = meta if isinstance(meta, dict) else {}
@@ -54,11 +58,21 @@ class Capture:
             return
         rid = token(response.get('id'))
         pair = (connection, rid)
+        terminal = response.get('status') in ('completed', 'failed', 'incomplete') or event in (
+            'response.completed', 'response.failed', 'response.incomplete')
+        if pair in self.ignored_responses:
+            if terminal:
+                self.ignored_responses.discard(pair)
+            return
         record_id = self.responses.get(pair) if rid else None
         if not record_id:
             pending = self.pending.get(connection, [])
             if len(pending) == 1:
                 record_id = pending.pop()
+                if record_id is None:
+                    if not terminal:
+                        self.ignored_responses.add(pair)
+                    return
                 self.records[record_id]['association'] = 'single_pending_request'
             else:
                 record_id = str(uuid.uuid4())
@@ -85,6 +99,7 @@ class Capture:
 
     def fail(self, connection, status='disconnected'):
         ids = set(self.pending.pop(connection, []))
+        self.ignored_responses = {pair for pair in self.ignored_responses if pair[0] != connection}
         for pair in list(self.responses):
             if pair[0] == connection:
                 ids.add(self.responses.pop(pair))

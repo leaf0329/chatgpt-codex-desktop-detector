@@ -76,4 +76,9 @@ class CaptureTests(unittest.TestCase):
 
     def test_warmup_is_not_request(self):
         self.capture.request('s', {'type':'response.create', 'model':'a', 'generate':False}, 'websocket')
+        self.response('a', conn='s', event='response.created', rid='warmup')
+        self.response('a', conn='s', rid='warmup')
         self.assertFalse(self.store.rows)
+        self.request('a', conn='s')
+        self.response('a', conn='s')
+        self.assertEqual(verdict(next(iter(self.store.rows.values()))), '名称一致')
