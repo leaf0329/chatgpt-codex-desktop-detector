@@ -99,6 +99,7 @@ class Monitor:
             self.state.set('8901 端口已占用，未启动采集。请检查其他实例。')
             return
         prepare_ca()
+        (LOCAL / 'capture-error.json').unlink(missing_ok=True)
         args = [str(ROOT / '.venv/Scripts/mitmdump.exe'), '-q', '-s', str(ROOT / 'capture_addon.py'),
                 '--listen-host', '127.0.0.1', '--listen-port', '8901',
                 '--set', f'confdir={LOCAL / "ca"}', '--set', 'flow_detail=0',
@@ -159,6 +160,8 @@ class Monitor:
                 else:
                     self.state.set('采集器就绪 · 点击“启动 Codex”或使用桌面 Model Monitor 入口')
             rows = self.store.recent(30)
+            if not self.demo and (LOCAL / 'capture-error.json').exists():
+                self.state.set('元数据采集失败，流量继续转发。当前模型结果可能不完整，请检查本地存储。')
             signature = [(r['id'], r['updated']) for r in rows]
             if signature != getattr(self, 'signature', None):
                 selection = self.table.selection()

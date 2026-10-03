@@ -11,6 +11,17 @@ class ModelMonitor:
     def __init__(self):
         self.capture = Capture()
 
+    def observe(self, method, *args):
+        try:
+            method(*args)
+        except Exception:
+            # Diagnostics must never abort the user's response stream.
+            try:
+                (Path(__file__).resolve().parent / '.local' / 'capture-error.json').write_text(
+                    '{"error":"metadata_capture_failed"}', encoding='utf-8')
+            except OSError:
+                pass
+
     def selected(self, flow):
         return (flow.request.pretty_host in ('chatgpt.com', 'api.openai.com') and
                 flow.request.path.split('?', 1)[0].rstrip('/') in ('/backend-api/codex/responses', '/v1/responses'))
@@ -19,7 +30,7 @@ class ModelMonitor:
         if not self.selected(flow) or flow.request.headers.get('upgrade', '').lower() == 'websocket':
             return
         try:
-            self.capture.request(flow.id, json.loads(flow.request.content), 'http')
+            self.observe(self.capture.request, flow.id, json.loads(flow.request.content), 'http')
         except (ValueError, TypeError):
             pass
 
@@ -27,14 +38,14 @@ class ModelMonitor:
         if not self.selected(flow) or flow.response.status_code == 101:
             return
         if flow.response.status_code >= 400:
-            self.capture.fail(flow.id, 'http_error')
+            self.observe(self.capture.fail, flow.id, 'http_error')
         if 'text/event-stream' in flow.response.headers.get('content-type', ''):
             if flow.response.headers.get('content-encoding', 'identity') != 'identity':
-                self.capture.fail(flow.id, 'parse_error')
+                self.observe(self.capture.fail, flow.id, 'parse_error')
                 flow.response.stream = True
                 return
-            parser = SSE(lambda data: self.capture.response(flow.id, data),
-                         lambda: self.capture.fail(flow.id, 'parse_error'))
+            parser = SSE(lambda data: self.observe(self.capture.response, flow.id, data),
+                         lambda: self.observe(self.capture.fail, flow.id, 'parse_error'))
             flow.response.stream = parser.feed
 
     def response(self, flow):
@@ -42,10 +53,10 @@ class ModelMonitor:
             return
         if not flow.response.stream:
             try:
-                self.capture.response(flow.id, json.loads(flow.response.get_text()))
+                self.observe(self.capture.response, flow.id, json.loads(flow.response.get_text()))
             except (ValueError, TypeError):
-                self.capture.fail(flow.id, 'parse_error')
-        self.capture.fail(flow.id)
+                self.observe(self.capture.fail, flow.id, 'parse_error')
+        self.observe(self.capture.fail, flow.id)
 
     def websocket_message(self, flow):
         if not self.selected(flow):
@@ -54,19 +65,19 @@ class ModelMonitor:
         try:
             data = json.loads(message.content)
             if message.from_client:
-                self.capture.request(flow.id, data, 'websocket')
+                self.observe(self.capture.request, flow.id, data, 'websocket')
             else:
-                self.capture.response(flow.id, data)
+                self.observe(self.capture.response, flow.id, data)
         except (ValueError, TypeError):
-            self.capture.fail(flow.id, 'parse_error')
+            self.observe(self.capture.fail, flow.id, 'parse_error')
         # Only prior messages are discarded; the current message still forwards unchanged.
         del flow.websocket.messages[:-1]
 
     def websocket_end(self, flow):
-        self.capture.fail(flow.id)
+        self.observe(self.capture.fail, flow.id)
 
     def error(self, flow):
-        self.capture.fail(flow.id)
+        self.observe(self.capture.fail, flow.id)
 
 
 addons = [ModelMonitor()]
