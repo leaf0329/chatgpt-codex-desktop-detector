@@ -10,6 +10,7 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -103,7 +104,7 @@ def main():
             db = tmp / 'capture.sqlite'
             env = os.environ.copy()
             env['CODEX_MONITOR_DB'] = str(db)
-            binary = Path(sys.executable).parent / ('mitmdump.exe' if os.name == 'nt' else 'mitmdump')
+            binary = Path(sysconfig.get_path('scripts')) / ('mitmdump.exe' if os.name == 'nt' else 'mitmdump')
             proc = subprocess.Popen([str(binary), '-q', '-s', str(ROOT/'capture_addon.py'), '-s', str(hook),
                                      '--listen-host','127.0.0.1','--listen-port',str(port),
                                      '--set',f'confdir={tmp / "ca"}',
