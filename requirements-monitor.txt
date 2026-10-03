@@ -1,0 +1,2 @@
+mitmproxy==11.0.2
+psutil==7.2.2
