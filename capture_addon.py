@@ -2,7 +2,6 @@
 import json
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture_core import Capture, SSE
@@ -13,8 +12,8 @@ class ModelMonitor:
         self.capture = Capture()
 
     def selected(self, flow):
-        return (flow.request.host in ('chatgpt.com', 'api.openai.com') and
-                urlsplit(flow.request.url).path.rstrip('/') in ('/backend-api/codex/responses', '/v1/responses'))
+        return (flow.request.pretty_host in ('chatgpt.com', 'api.openai.com') and
+                flow.request.path.split('?', 1)[0].rstrip('/') in ('/backend-api/codex/responses', '/v1/responses'))
 
     def request(self, flow):
         if not self.selected(flow) or flow.request.headers.get('upgrade', '').lower() == 'websocket':

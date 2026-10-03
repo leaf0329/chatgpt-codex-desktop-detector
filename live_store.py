@@ -1,11 +1,12 @@
 """Bounded metadata journal. No headers, prompts, output text or credentials."""
 import json
+import os
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
 
-PATH = Path(__file__).resolve().parent / '.local' / 'live.sqlite'
+PATH = Path(os.environ.get('CODEX_MONITOR_DB', Path(__file__).resolve().parent / '.local' / 'live.sqlite'))
 
 
 class Store:
