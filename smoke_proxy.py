@@ -73,7 +73,7 @@ class Upstream(BaseHTTPRequestHandler):
 
 def main():
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
-    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    started = False
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
@@ -96,6 +96,8 @@ def main():
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             tls.load_cert_chain(cert_path, key_path)
             upstream.socket = tls.wrap_socket(upstream.socket, server_side=True)
+            threading.Thread(target=upstream.serve_forever, daemon=True).start()
+            started = True
             hook = tmp / 'redirect.py'
             hook.write_text(f'def server_connect(data):\n    data.server.address = ("127.0.0.1", {upstream.server_port})')
             db = tmp / 'capture.sqlite'
@@ -145,7 +147,8 @@ def main():
                 proc.terminate()
                 proc.wait(timeout=10)
     finally:
-        upstream.shutdown()
+        if started:
+            upstream.shutdown()
         upstream.server_close()
 
 

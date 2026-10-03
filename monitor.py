@@ -7,10 +7,12 @@ import subprocess
 import sys
 import time
 import tkinter as tk
+import tempfile
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 import certifi
+import psutil
 from mitmproxy.certs import CertStore
 
 from live_store import Store, verdict
@@ -36,15 +38,17 @@ def available(port):
 
 
 class Monitor:
-    def __init__(self, launch=False):
+    def __init__(self, launch=False, demo=False):
         LOCAL.mkdir(exist_ok=True)
-        self.store = Store()
+        self.demo = demo
+        self.demo_directory = tempfile.TemporaryDirectory() if demo else None
+        self.store = Store(Path(self.demo_directory.name) / 'demo.sqlite') if demo else Store()
         self.proxy = None
         self.launch_process = None
         self.launch_result = LOCAL / 'launch-result.json'
         self.last_seen = time.time()
         self.root = tk.Tk()
-        self.root.title('Codex · 模型观察窗')
+        self.root.title('Codex · 模型观察窗（演示）' if demo else 'Codex · 模型观察窗')
         self.root.geometry('720x460')
         self.root.minsize(620, 370)
         self.root.attributes('-topmost', True)
@@ -70,13 +74,23 @@ class Monitor:
         ttk.Checkbutton(controls, text='新事件显示窗口', variable=self.auto_show).pack(side='left')
         ttk.Checkbutton(controls, text='置顶', variable=self.topmost,
                         command=lambda: self.root.attributes('-topmost', self.topmost.get())).pack(side='left')
-        ttk.Button(controls, text='启动 Codex', command=self.launch).pack(side='right', padx=4)
+        ttk.Button(controls, text='启动 Codex', command=self.launch,
+                   state='disabled' if demo else 'normal').pack(side='right', padx=4)
         ttk.Button(controls, text='停止并退出', command=self.quit).pack(side='right', padx=4)
         ttk.Label(self.root, text='模型名称来自流量字段；名称一致不证明底层模型身份。关闭按钮仅最小化。',
                   wraplength=680).pack(padx=14, pady=(0, 12), anchor='w')
         self.rows = {}
-        self.start_proxy()
-        if launch:
+        if demo:
+            from capture_core import Capture
+            self.demo_capture = Capture(self.store)
+            self.state.set('演示模式 · 测试数据 · 不连接 Codex、不启动代理')
+            self.root.after(1000, lambda: self.demo_capture.request('demo',
+                {'type': 'response.create', 'model': 'demo-model'}, 'websocket'))
+            self.root.after(2500, lambda: self.demo_capture.response('demo',
+                {'type': 'response.completed', 'response': {'id': 'resp_demo', 'model': 'demo-model'}}))
+        else:
+            self.start_proxy()
+        if launch and not demo:
             self.root.after(700, self.launch)
         self.root.after(500, self.poll)
 
@@ -128,6 +142,22 @@ class Monitor:
                 self.launch_process = None
             elif self.state.get().startswith('正在启动') and available(8901):
                 self.state.set('采集器就绪 · 127.0.0.1:8901 · 仅监测通过联动入口启动的 Codex')
+            if not self.demo and self.proxy and self.proxy.poll() is None and time.time() > getattr(self, 'next_health', 0):
+                self.next_health = time.time() + 5
+                desktop = []
+                for process in psutil.process_iter(['pid', 'name', 'ppid']):
+                    if (process.info['name'] or '').lower() == 'chatgpt.exe':
+                        desktop.append(process)
+                pids = {process.pid for process in desktop}
+                main_processes = [process for process in desktop if process.ppid() not in pids]
+                if main_processes:
+                    enabled = any(process.environ().get('HTTPS_PROXY') == 'http://127.0.0.1:8901' and
+                                  process.environ().get('CODEX_CA_CERTIFICATE') == str(LOCAL / 'codex-ca-bundle.pem')
+                                  for process in main_processes)
+                    self.state.set('Codex 已通过监测入口启动 · 等待/观察响应' if enabled else
+                                   '当前 Codex 未使用监测设置。请完全退出后从 Model Monitor 入口重开。')
+                else:
+                    self.state.set('采集器就绪 · 点击“启动 Codex”或使用桌面 Model Monitor 入口')
             rows = self.store.recent(30)
             signature = [(r['id'], r['updated']) for r in rows]
             if signature != getattr(self, 'signature', None):
@@ -146,7 +176,7 @@ class Monitor:
                     self.details.set(f"{latest.get('request_model') or '未提供'} → {latest.get('response_model') or '未提供'} · {verdict(latest)}")
                     if self.auto_show.get():
                         self.root.deiconify()
-            while True:
+            while lock is not None:
                 try:
                     client, _ = lock.accept()
                 except BlockingIOError:
@@ -162,7 +192,7 @@ class Monitor:
         self.root.after(500, self.poll)
 
     def quit(self):
-        if not messagebox.askyesno('停止采集', '停止代理后，监测版 Codex 需要关闭并用普通入口重开才能恢复直连。确认停止？'):
+        if not self.demo and not messagebox.askyesno('停止采集', '停止代理后，监测版 Codex 需要关闭并用普通入口重开才能恢复直连。确认停止？'):
             return
         self.root.destroy()
 
@@ -176,22 +206,29 @@ class Monitor:
                     self.proxy.wait(5)
                 except subprocess.TimeoutExpired:
                     self.proxy.kill()
+                    self.proxy.wait(5)
+            if self.demo_directory:
+                self.demo_directory.cleanup()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--launch', action='store_true')
+    parser.add_argument('--demo', action='store_true', help='Show an isolated synthetic request/response demo')
     args = parser.parse_args()
-    lock = socket.socket()
+    lock = None
+    if not args.demo:
+        lock = socket.socket()
+        try:
+            lock.bind(('127.0.0.1', 8902))
+        except OSError:
+            with socket.create_connection(('127.0.0.1', 8902), timeout=1) as existing:
+                existing.sendall(b'launch' if args.launch else b'show')
+            sys.exit(0)
+        lock.listen(4)
+        lock.setblocking(False)
     try:
-        lock.bind(('127.0.0.1', 8902))
-    except OSError:
-        with socket.create_connection(('127.0.0.1', 8902), timeout=1) as existing:
-            existing.sendall(b'launch' if args.launch else b'show')
-        sys.exit(0)
-    lock.listen(4)
-    lock.setblocking(False)
-    try:
-        Monitor(args.launch).run()
+        Monitor(args.launch, args.demo).run()
     finally:
-        lock.close()
+        if lock:
+            lock.close()
