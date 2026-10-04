@@ -2,7 +2,7 @@
 
 面向 **Windows Codex Desktop** 的常驻模型观察工具。通过联动入口启动 Codex 后，在独立窗口中实时显示每次请求的模型、响应声明的模型及匹配状态，也提供本地任务记录检查。
 
-当前版本 **v0.3.0**，用户已反馈当前环境整体可用。Desktop 联动启动仅支持 Windows Store 的 `OpenAI.Codex` 安装，ChatGPT 网页暂不支持。本项目不是 OpenAI 官方产品。
+当前版本 **v0.3.1**，用户已反馈当前环境整体可用。Desktop 联动启动仅支持 Windows Store 的 `OpenAI.Codex` 安装，ChatGPT 网页暂不支持。本项目不是 OpenAI 官方产品。
 
 **名称一致不能证明底层模型身份或能力；名称不同也不直接等于“降智”。** 本工具比较真实请求字段与响应声明，不通过模型在对话中自报的名称判断。
 
@@ -13,7 +13,7 @@
 1. 从 [Releases](https://github.com/leaf0329/chatgpt-codex-desktop-detector/releases/latest) 下载 **Source code (zip)**，解压到长期保留的目录。也可使用 Git：
 
    ```powershell
-   git clone --branch v0.3.0 https://github.com/leaf0329/chatgpt-codex-desktop-detector.git
+   git clone --branch v0.3.1 https://github.com/leaf0329/chatgpt-codex-desktop-detector.git
    cd chatgpt-codex-desktop-detector
    ```
 
@@ -33,14 +33,27 @@
 
 ## 如何读结果
 
-| 状态 | 含义 |
+观察窗分别显示“模型匹配”和“请求状态”。例如 **名称一致 · 连接中断** 表示已观察到相同模型名称，但没有取得响应完成事件；后续重试会保留为另一条请求，不覆盖中断记录。
+
+| 模型匹配 | 含义 |
 | --- | --- |
 | 名称一致 | 请求模型与响应声明模型名称相同 |
 | 名称不同 | 名称不同，需结合模型别名、服务端配置进一步判断 |
 | 等待响应 | 尚未取得可用于判断的响应 |
-| 响应未提供模型 | 响应没有可提取的模型字段，无法比较 |
-| 请求异常 | 通信失败或解析不支持，不能据此判断降级 |
+| 响应未提供模型 | 请求已完成或停止，但未取得响应模型字段，无法比较 |
 | 配对不确定 | 无法可靠关联请求和响应，不猜测对应关系 |
+
+| 请求状态 | 含义 |
+| --- | --- |
+| 等待响应 / 响应中 | 尚未收到响应，或尚未取得完成事件 |
+| 已完成 | 已观察到响应完成事件 |
+| 连接中断 | 连接结束时未取得完成事件，可能断线、取消或重试，不能确认具体原因 |
+| 服务端报错 / 响应未完成 | 收到服务端错误、失败或未完成状态 |
+| HTTP 错误 | 收到 HTTP 错误状态 |
+| 采集解析异常 | 采集器无法解析响应，不代表 Codex 请求一定失败 |
+| 状态未知 | 采集到未识别的状态 |
+
+请求状态不会覆盖已有模型名称的比较结果；模型名称一致也不表示请求一定完成。选中条目可查看状态解释。
 
 一轮对话可能发出多个请求，列表按请求展示。选中条目可查看任务、轮次和响应 ID；缺失字段如实标注。WebSocket 预热请求不计入对话结果。
 
@@ -126,7 +139,7 @@ python -m unittest -v
 .\.venv\Scripts\python.exe smoke_proxy.py
 ```
 
-GitHub Actions 在 Windows/Linux 上运行单元测试和离线传输检查。离线测试使用临时 CA、合成上游和临时数据库，验证 TLS、HTTPS/SSE、同连接多次 WSS 请求、原样转发与正文不入库，不访问真实 OpenAI 服务。当前 13 项单元测试通过，真实客户端兼容性仍取决于版本和环境。
+GitHub Actions 在 Windows/Linux 上运行单元测试和离线传输检查。离线测试使用临时 CA、合成上游和临时数据库，验证 TLS、HTTPS/SSE、同连接多次 WSS 请求、原样转发与正文不入库，不访问真实 OpenAI 服务。当前 15 项单元测试覆盖解析、隐私过滤、配对和断线后重试等场景，真实客户端兼容性仍取决于版本和环境。
 
 发布版本记录在 `VERSION`、Git 标签和 [CHANGELOG.md](CHANGELOG.md)。
 

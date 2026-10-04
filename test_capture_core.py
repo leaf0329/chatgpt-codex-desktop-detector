@@ -2,7 +2,7 @@ import copy
 import json
 import unittest
 from capture_core import Capture, SSE
-from live_store import verdict
+from live_store import verdict, request_state, request_detail
 
 
 class Memory:
@@ -45,7 +45,41 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(verdict(list(self.store.rows.values())[-1]), '名称不同')
         self.request()
         self.capture.fail('socket')
-        self.assertEqual(verdict(list(self.store.rows.values())[-1]), '请求异常')
+        row = list(self.store.rows.values())[-1]
+        self.assertEqual(verdict(row), '响应未提供模型')
+        self.assertEqual(request_state(row), '连接中断')
+
+    def test_disconnect_after_model_then_retry_completes(self):
+        self.request('gpt-6-astra')
+        self.response('gpt-6-astra', event='response.created')
+        self.capture.fail('socket')
+        interrupted = list(self.store.rows.values())[-1]
+        self.assertEqual(verdict(interrupted), '名称一致')
+        self.assertEqual(request_state(interrupted), '连接中断')
+        self.assertIn('不能确认具体原因', request_detail(interrupted))
+        self.request('gpt-6-astra', conn='retry')
+        self.response('gpt-6-astra', conn='retry', rid='resp_retry')
+        completed = list(self.store.rows.values())[-1]
+        self.assertEqual(verdict(completed), '名称一致')
+        self.assertEqual(request_state(completed), '已完成')
+        self.assertEqual(self.store.rows[interrupted['id']], interrupted)
+
+    def test_model_evidence_independent_of_request_status(self):
+        for status, label in [('failed', '服务端报错'), ('incomplete', '响应未完成'),
+                              ('http_error', 'HTTP 错误'), ('parse_error', '采集解析异常')]:
+            with self.subTest(status=status):
+                row = {'request_model': 'a', 'response_model': 'a', 'status': status}
+                self.assertEqual(verdict(row), '名称一致')
+                self.assertEqual(request_state(row), label)
+                row['response_model'] = 'b'
+                self.assertEqual(verdict(row), '名称不同')
+                row['association'] = 'uncertain'
+                self.assertEqual(verdict(row), '配对不确定')
+                row.pop('association')
+                row['response_model'] = None
+                self.assertEqual(verdict(row), '响应未提供模型')
+        self.assertEqual(request_state({'status': 'in_progress'}), '响应中')
+        self.assertEqual(request_state({'status': 'new_status'}), '状态未知')
 
     def test_concurrent_connections_and_ambiguous(self):
         self.request('a', 'first')
