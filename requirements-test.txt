@@ -1,0 +1,2 @@
+-r requirements-monitor.txt
+websocket-client==1.9.2
