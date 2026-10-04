@@ -15,7 +15,7 @@ import certifi
 import psutil
 from mitmproxy.certs import CertStore
 
-from live_store import Store, verdict
+from live_store import Store, verdict, request_state, request_detail
 
 ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / '.local'
@@ -49,8 +49,8 @@ class Monitor:
         self.last_seen = time.time()
         self.root = tk.Tk()
         self.root.title('Codex · 模型观察窗（演示）' if demo else 'Codex · 模型观察窗')
-        self.root.geometry('720x460')
-        self.root.minsize(620, 370)
+        self.root.geometry('860x500')
+        self.root.minsize(820, 420)
         self.root.attributes('-topmost', True)
         self.root.configure(bg='#f3f7f7')
         self.root.protocol('WM_DELETE_WINDOW', self.root.iconify)
@@ -61,10 +61,11 @@ class Monitor:
         bar = ttk.Frame(self.root, padding=14)
         bar.pack(fill='x')
         ttk.Label(bar, text='请求模型 / 响应模型', font=('Microsoft YaHei UI', 15, 'bold')).pack(anchor='w')
-        ttk.Label(bar, textvariable=self.state, wraplength=680).pack(anchor='w', pady=7)
-        ttk.Label(bar, textvariable=self.details, wraplength=680).pack(anchor='w')
-        self.table = ttk.Treeview(self.root, columns=('time', 'request', 'response', 'result'), show='headings', height=9)
-        for key, label, width in [('time', '时间', 75), ('request', '请求模型', 180), ('response', '响应声明模型', 180), ('result', '状态', 145)]:
+        ttk.Label(bar, textvariable=self.state, wraplength=820).pack(anchor='w', pady=7)
+        ttk.Label(bar, textvariable=self.details, wraplength=820).pack(anchor='w')
+        self.table = ttk.Treeview(self.root, columns=('time', 'request', 'response', 'result', 'status'), show='headings', height=9)
+        for key, label, width in [('time', '时间', 75), ('request', '请求模型', 180), ('response', '响应声明模型', 180),
+                                  ('result', '模型匹配', 155), ('status', '请求状态', 140)]:
             self.table.heading(key, text=label)
             self.table.column(key, width=width, minwidth=50)
         self.table.pack(fill='both', expand=True, padx=14)
@@ -78,7 +79,7 @@ class Monitor:
                    state='disabled' if demo else 'normal').pack(side='right', padx=4)
         ttk.Button(controls, text='停止并退出', command=self.quit).pack(side='right', padx=4)
         ttk.Label(self.root, text='模型名称来自流量字段；名称一致不证明底层模型身份。关闭按钮仅最小化。',
-                  wraplength=680).pack(padx=14, pady=(0, 12), anchor='w')
+                  wraplength=820).pack(padx=14, pady=(0, 12), anchor='w')
         self.rows = {}
         if demo:
             from capture_core import Capture
@@ -128,7 +129,8 @@ class Monitor:
         if selection and selection[0] in self.rows:
             row = self.rows[selection[0]]
             self.details.set(f"任务 {row.get('thread_id') or '未提供'} · 轮次 {row.get('turn_id') or '未提供'}\n"
-                             f"响应 {row.get('response_id') or '等待'} · {row.get('transport')} · {row.get('status')}")
+                             f"响应 {row.get('response_id') or '未提供'} · {row.get('transport')} · {verdict(row)} · {request_state(row)}\n"
+                             f"{request_detail(row)}")
 
     def poll(self):
         try:
@@ -170,15 +172,19 @@ class Monitor:
                 self.table.delete(*self.table.get_children())
                 for row in rows:
                     self.table.insert('', 'end', iid=row['id'], values=(time.strftime('%H:%M:%S', time.localtime(row['started'])),
-                        row.get('request_model') or '未提供', row.get('response_model') or '未提供', verdict(row)))
+                        row.get('request_model') or '未提供', row.get('response_model') or '未提供',
+                        verdict(row), request_state(row)))
                 if selection and selection[0] in self.rows:
                     self.table.selection_set(selection[0])
                 if rows and rows[0]['updated'] > self.last_seen:
                     self.last_seen = rows[0]['updated']
                     latest = rows[0]
-                    self.details.set(f"{latest.get('request_model') or '未提供'} → {latest.get('response_model') or '未提供'} · {verdict(latest)}")
+                    self.details.set(f"{latest.get('request_model') or '未提供'} → {latest.get('response_model') or '未提供'} · "
+                                     f"{verdict(latest)} · {request_state(latest)}\n{request_detail(latest)}")
                     if self.auto_show.get():
                         self.root.deiconify()
+                if selection and selection[0] in self.rows:
+                    self.select()
             while lock is not None:
                 try:
                     client, _ = lock.accept()
